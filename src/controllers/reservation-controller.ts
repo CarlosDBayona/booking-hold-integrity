@@ -1,5 +1,11 @@
-import { Router } from "express";
-import { confirmLatencyHistogram, confirmSuccessCounter, holdCreatedCounter, holdLatencyHistogram, holdRejectedCounter } from "../observability/metrics";
+import { Body, Controller, HttpCode, HttpException, HttpStatus, Inject, Post } from "@nestjs/common";
+import {
+  confirmLatencyHistogram,
+  confirmSuccessCounter,
+  holdCreatedCounter,
+  holdLatencyHistogram,
+  holdRejectedCounter,
+} from "../observability/metrics";
 import { logger } from "../observability/logger";
 import { InventoryService } from "../services/inventory-service";
 import { LockService } from "../services/lock-service";
@@ -9,22 +15,26 @@ function isNonEmptyString(value: unknown): value is string {
   return typeof value === "string" && value.trim().length > 0;
 }
 
-export function createReservationRouter(lockService: LockService, inventoryService: InventoryService): Router {
-  const router = Router();
+@Controller("reservations")
+export class ReservationController {
+  constructor(
+    @Inject(LockService) private readonly lockService: LockService,
+    @Inject(InventoryService) private readonly inventoryService: InventoryService,
+  ) {}
 
-  router.post("/hold", async (req, res) => {
+  @Post("hold")
+  async hold(@Body() body: Partial<HoldRequest>) {
     const start = Date.now();
-    const body = req.body as Partial<HoldRequest>;
 
     if (!isNonEmptyString(body.skuId) || !isNonEmptyString(body.userId) || !isNonEmptyString(body.cartId)) {
-      return res.status(400).json({ reason: "INVALID_PAYLOAD" });
+      throw new HttpException({ reason: "INVALID_PAYLOAD" }, HttpStatus.BAD_REQUEST);
     }
 
-    if (await inventoryService.isReserved(body.skuId)) {
-      return res.status(409).json({ reason: "SKU_CONSUMED" });
+    if (await this.inventoryService.isReserved(body.skuId)) {
+      throw new HttpException({ reason: "SKU_CONSUMED" }, HttpStatus.CONFLICT);
     }
 
-    const result = await lockService.acquireLock(
+    const result = await this.lockService.acquireLock(
       body.skuId,
       { userId: body.userId, cartId: body.cartId },
       Number(process.env.LOCK_TTL_SECONDS ?? 900),
@@ -47,7 +57,7 @@ export function createReservationRouter(lockService: LockService, inventoryServi
         ttlSecondsRemaining: result.lock?.ttlSecondsRemaining,
       };
 
-      return res.status(409).json(response);
+      throw new HttpException(response, HttpStatus.CONFLICT);
     }
 
     holdCreatedCounter.inc();
@@ -63,61 +73,61 @@ export function createReservationRouter(lockService: LockService, inventoryServi
       ttlSecondsRemaining: result.lock?.ttlSecondsRemaining,
     };
 
-    return res.status(201).json(response);
-  });
+    return response;
+  }
 
-  router.post("/confirm", async (req, res) => {
+  @Post("confirm")
+  @HttpCode(200)
+  async confirm(@Body() body: Partial<ConfirmRequest>) {
     const start = Date.now();
-    const body = req.body as Partial<ConfirmRequest>;
 
     if (!isNonEmptyString(body.skuId) || !isNonEmptyString(body.userId) || !isNonEmptyString(body.cartId)) {
-      return res.status(400).json({ reason: "INVALID_PAYLOAD" });
+      throw new HttpException({ reason: "INVALID_PAYLOAD" }, HttpStatus.BAD_REQUEST);
     }
 
-    const lock = await lockService.getLock(body.skuId);
+    const lock = await this.lockService.getLock(body.skuId);
     if (!lock) {
-      return res.status(409).json({ reason: "SKU_LOCK_MISSING" });
+      throw new HttpException({ reason: "SKU_LOCK_MISSING" }, HttpStatus.CONFLICT);
     }
 
     if (lock.payload.userId !== body.userId || lock.payload.cartId !== body.cartId) {
-      return res.status(409).json({ reason: "SKU_LOCK_OWNERSHIP_MISMATCH" });
+      throw new HttpException({ reason: "SKU_LOCK_OWNERSHIP_MISMATCH" }, HttpStatus.CONFLICT);
     }
 
-    const reserved = await inventoryService.markReserved(body.skuId, body.userId, body.cartId);
+    const reserved = await this.inventoryService.markReserved(body.skuId, body.userId, body.cartId);
     if (!reserved) {
-      return res.status(409).json({ reason: "SKU_ALREADY_RESERVED" });
+      throw new HttpException({ reason: "SKU_ALREADY_RESERVED" }, HttpStatus.CONFLICT);
     }
 
-    await lockService.releaseLock(body.skuId);
+    await this.lockService.releaseLock(body.skuId);
     confirmLatencyHistogram.observe(Date.now() - start);
     confirmSuccessCounter.inc();
 
     logger.info({ skuId: body.skuId, confirmed: true }, "Reservation confirmed");
 
-    return res.status(200).json({ status: "CONFIRMED", skuId: body.skuId });
-  });
+    return { status: "CONFIRMED", skuId: body.skuId };
+  }
 
-  router.post("/cancel", async (req, res) => {
-    const body = req.body as Partial<CancelRequest>;
+  @Post("cancel")
+  @HttpCode(200)
+  async cancel(@Body() body: Partial<CancelRequest>) {
 
     if (!isNonEmptyString(body.skuId) || !isNonEmptyString(body.userId) || !isNonEmptyString(body.cartId)) {
-      return res.status(400).json({ reason: "INVALID_PAYLOAD" });
+      throw new HttpException({ reason: "INVALID_PAYLOAD" }, HttpStatus.BAD_REQUEST);
     }
 
-    const lock = await lockService.getLock(body.skuId);
+    const lock = await this.lockService.getLock(body.skuId);
     if (!lock) {
-      return res.status(404).json({ reason: "SKU_LOCK_NOT_FOUND" });
+      throw new HttpException({ reason: "SKU_LOCK_NOT_FOUND" }, HttpStatus.NOT_FOUND);
     }
 
     if (lock.payload.userId !== body.userId || lock.payload.cartId !== body.cartId) {
-      return res.status(409).json({ reason: "SKU_LOCK_OWNERSHIP_MISMATCH" });
+      throw new HttpException({ reason: "SKU_LOCK_OWNERSHIP_MISMATCH" }, HttpStatus.CONFLICT);
     }
 
-    await lockService.releaseLock(body.skuId);
+    await this.lockService.releaseLock(body.skuId);
     logger.info({ skuId: body.skuId, canceled: true }, "Reservation canceled and lock released");
 
-    return res.status(200).json({ status: "CANCELED", skuId: body.skuId });
-  });
-
-  return router;
+    return { status: "CANCELED", skuId: body.skuId };
+  }
 }

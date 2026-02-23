@@ -2,6 +2,8 @@
 
 Implementación del experimento anti-overbooking con lock temporal por SKU usando Redis (`SET NX EX 900`).
 
+Stack HTTP: **NestJS** (adapter Express interno de Nest).
+
 ## Requisitos
 
 - Node.js 20+
@@ -71,7 +73,7 @@ Variables del script de concurrencia:
 
 ## Resultados del experimento
 
-Ejecución validada el **2026-02-22**.
+Ejecución validada el **2026-02-23**.
 
 ### Integración con Docker (Redis)
 

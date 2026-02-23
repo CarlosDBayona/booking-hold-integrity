@@ -1,3 +1,5 @@
+import { Inject, Injectable } from "@nestjs/common";
+import { REDIS_CLIENT } from "../redis";
 import { RedisLike } from "./lock-service";
 
 interface ReservedPayload {
@@ -7,10 +9,11 @@ interface ReservedPayload {
   cartId: string;
 }
 
+@Injectable()
 export class InventoryService {
   private readonly reservedPrefix = "reserved:sku:";
 
-  constructor(private readonly redis: RedisLike) {}
+  constructor(@Inject(REDIS_CLIENT) private readonly redis: RedisLike) {}
 
   private getReservedKey(skuId: string): string {
     return `${this.reservedPrefix}${skuId}`;

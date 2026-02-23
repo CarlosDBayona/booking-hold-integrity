@@ -1,3 +1,5 @@
+import { Inject, Injectable } from "@nestjs/common";
+import { REDIS_CLIENT } from "../redis";
 import { LockAcquireResult, LockPayload, ParsedLock } from "../types";
 
 export interface RedisLike {
@@ -7,10 +9,11 @@ export interface RedisLike {
   ttl(key: string): Promise<number>;
 }
 
+@Injectable()
 export class LockService {
   private readonly keyPrefix = "lock:sku:";
 
-  constructor(private readonly redis: RedisLike) {}
+  constructor(@Inject(REDIS_CLIENT) private readonly redis: RedisLike) {}
 
   private getKey(skuId: string): string {
     return `${this.keyPrefix}${skuId}`;

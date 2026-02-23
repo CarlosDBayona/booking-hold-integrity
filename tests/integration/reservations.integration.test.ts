@@ -30,7 +30,7 @@ describeOrSkip("Reservation API integration (Redis docker)", () => {
   });
 
   it("rejects second hold for same SKU and keeps first owner", async () => {
-    const app = createApp(redis as never);
+    const app = await createApp(redis as never);
 
     const first = await request(app)
       .post("/reservations/hold")
@@ -51,7 +51,7 @@ describeOrSkip("Reservation API integration (Redis docker)", () => {
   });
 
   it("confirms reservation and releases lock", async () => {
-    const app = createApp(redis as never);
+    const app = await createApp(redis as never);
 
     await request(app)
       .post("/reservations/hold")
